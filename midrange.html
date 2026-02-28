@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>🏀 Mid-Range Timing Shot</title>
+  <style>
+    body{margin:0;background:#0b0f18;color:#fff;font-family:Arial;text-align:center}
+    h1{margin:18px 0 6px}
+    .hud{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-bottom:8px}
+    .chip{background:#111827;border:1px solid #ffffff1a;border-radius:999px;padding:8px 12px;min-width:140px}
+    canvas{display:block;margin:10px auto;border-radius:18px;background:#111827;box-shadow:0 20px 50px rgba(0,0,0,.6);max-width:96vw;height:auto}
+    .tip{opacity:.75;font-size:14px;margin:6px 0 10px}
+    .controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;padding:10px 12px 18px}
+    .btn{padding:12px 16px;border-radius:14px;border:0;font-weight:900;cursor:pointer;background:#1f2937;color:#fff;min-width:90px}
+    .btn.shoot{background:#f59e0b;color:#0b1020}
+    .btn.reset{background:#93c5fd;color:#0b1020}
+  </style>
+</head>
+<body>
+  <h1>🏀 Mid-Range Timing Shot</h1>
+  <div class="hud">
+    <div class="chip">Score: <b id="score">0</b></div>
+    <div class="chip">Streak: <b id="streak">0</b></div>
+    <div class="chip">Last: <b id="last">-</b></div>
+  </div>
+  <div class="tip">Move: A/D or ←/→ • Hold Space (or hold Shoot) then RELEASE to time it in the GREEN zone</div>
+
+  <canvas id="cv" width="820" height="480"></canvas>
+
+  <div class="controls">
+    <button class="btn" id="leftBtn">⬅ Left</button>
+    <button class="btn shoot" id="shootBtn">⏱ Hold Shoot</button>
+    <button class="btn" id="rightBtn">Right ➡</button>
+    <button class="btn reset" onclick="resetGame()">Reset</button>
+  </div>
+
+<script>
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+
+const scoreEl = document.getElementById("score");
+const streakEl = document.getElementById("streak");
+const lastEl = document.getElementById("last");
+
+let score = 0, streak = 0;
+
+const floorY = 360;
+
+// hoop
+const hoop = { x: 660, y: 150, rimR: 18, boardX: 705, boardY: 80, boardW: 10, boardH: 130 };
+
+// player
+const player = { x: 200, y: 305, r: 20, speed: 5 };
+const keys = { left:false, right:false };
+
+// ball
+let ball = null; // {x,y,vx,vy,live}
+const gravity = 0.45;
+
+// timing meter
+let aiming = false;
+let meter = { x: 0, dir: 1, speed: 0.018, value: 0 }; // value in [0..1]
+let meterFrozen = false;
+
+// Green window positions (change to tune difficulty)
+const greenStart = 0.62;
+const greenEnd   = 0.72;
+
+function resetBall(){
+  ball = null;
+}
+
+function resetGame(){
+  score = 0; streak = 0;
+  scoreEl.textContent = score;
+  streakEl.textContent = streak;
+  lastEl.textContent = "-";
+  player.x = 200;
+  aiming = false;
+  meterFrozen = false;
+  meter.value = 0;
+  meter.dir = 1;
+  resetBall();
+}
+
+function drawCourt(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+
+  // background gradient feel
+  ctx.fillStyle = "#0b0f18";
+  ctx.fillRect(0,0,cv.width,cv.height);
+
+  // floor
+  ctx.fillStyle = "#1f2937";
+  ctx.fillRect(0,floorY,cv.width,cv.height-floorY);
+
+  // midrange zone marker
+  ctx.fillStyle = "rgba(255,255,255,0.07)";
+  ctx.fillRect(240, floorY-6, 180, 6);
+
+  // backboard
+  ctx.fillStyle = "#e5e7eb";
+  ctx.fillRect(hoop.boardX, hoop.boardY, hoop.boardW, hoop.boardH);
+
+  // rim
+  ctx.strokeStyle="#f97316";
+  ctx.lineWidth=6;
+  ctx.beginPath();
+  ctx.arc(hoop.x, hoop.y, hoop.rimR, 0, Math.PI*2);
+  ctx.stroke();
+
+  // net
+  ctx.strokeStyle="rgba(255,255,255,0.25)";
+  ctx.lineWidth=2;
+  for(let i=-2;i<=2;i++){
+    ctx.beginPath();
+    ctx.moveTo(hoop.x + i*6, hoop.y + hoop.rimR);
+    ctx.lineTo(hoop.x + i*3, hoop.y + hoop.rimR + 36);
+    ctx.stroke();
+  }
+
+  // player
+  ctx.fillStyle="#06b6d4";
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
+  ctx.fill();
+
+  // ball in hands if not live
+  if(!ball){
+    ctx.fillStyle="#ffb000";
+    ctx.beginPath();
+    ctx.arc(player.x+14, player.y-20, 10, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // flying ball
+  if(ball){
+    ctx.fillStyle="#ffb000";
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, 10, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  drawMeter();
+}
+
+function drawMeter(){
+  // meter box
+  const box = { x: 260, y: 22, w: 300, h: 18 };
+
+  ctx.fillStyle="rgba(17,24,39,0.9)";
+  ctx.fillRect(box.x, box.y, box.w, box.h);
+  ctx.strokeStyle="rgba(255,255,255,0.15)";
+  ctx.strokeRect(box.x, box.y, box.w, box.h);
+
+  // green window
+  const gx = box.x + box.w * greenStart;
+  const gw = box.w * (greenEnd - greenStart);
+  ctx.fillStyle="rgba(34,197,94,0.75)";
+  ctx.fillRect(gx, box.y, gw, box.h);
+
+  // moving needle
+  const nx = box.x + box.w * meter.value;
+  ctx.strokeStyle = aiming ? "rgba(255,176,0,0.95)" : "rgba(255,255,255,0.35)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(nx, box.y-4);
+  ctx.lineTo(nx, box.y + box.h + 4);
+  ctx.stroke();
+
+  // label
+  ctx.fillStyle="rgba(255,255,255,0.85)";
+  ctx.font="14px Arial";
+  ctx.fillText(aiming ? "Timing: RELEASE!" : "Hold to start meter", 18, 36);
+}
+
+function update(){
+  // movement
+  if(keys.left) player.x -= player.speed;
+  if(keys.right) player.x += player.speed;
+  player.x = Math.max(player.r, Math.min(cv.width-player.r, player.x));
+
+  // meter motion
+  if(aiming && !meterFrozen){
+    // bounce needle back and forth
+    meter.value += meter.speed * meter.dir;
+    if(meter.value >= 1){ meter.value = 1; meter.dir = -1; }
+    if(meter.value <= 0){ meter.value = 0; meter.dir = 1; }
+  }
+
+  // ball physics
+  if(ball){
+    ball.vy += gravity;
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+
+    // backboard bounce
+    if(ball.x + 10 > hoop.boardX && ball.x - 10 < hoop.boardX + hoop.boardW &&
+       ball.y + 10 > hoop.boardY && ball.y - 10 < hoop.boardY + hoop.boardH){
+      ball.vx *= -0.7;
+      ball.x = hoop.boardX - 11;
+    }
+
+    // floor / out
+    if(ball.y > floorY - 10){
+      // miss landed
+      missShot();
+      ball = null;
+    }
+
+    // make detection (ball crosses rim center downward inside rim)
+    const dx = ball.x - hoop.x;
+    const dy = ball.y - hoop.y;
+    const dist = Math.hypot(dx, dy);
+    const enteringDown = (ball.prevY < hoop.y) && (ball.y >= hoop.y) && ball.vy > 0;
+    if(enteringDown && dist < (hoop.rimR - 2)){
+      makeShot();
+      ball = null;
+    }
+    if(ball) ball.prevY = ball.y;
+  }
+}
+
+function makeShot(){
+  score += 2;
+  streak += 1;
+  scoreEl.textContent = score;
+  streakEl.textContent = streak;
+  lastEl.textContent = (streak >= 2) ? "✅ SWISH!" : "✅ MAKE";
+}
+
+function missShot(){
+  streak = 0;
+  streakEl.textContent = streak;
+  lastEl.textContent = "❌ MISS";
+}
+
+function shoot(releaseValue){
+  // only allow a shot if no ball is flying
+  if(ball) return;
+
+  // accuracy based on release timing
+  const green = (releaseValue >= greenStart && releaseValue <= greenEnd);
+
+  // base shot vector to hoop
+  const startX = player.x + 14;
+  const startY = player.y - 20;
+
+  // compute rough direction to hoop
+  const tx = hoop.x - startX;
+  const ty = (hoop.y - 10) - startY;
+
+  // convert to velocities
+  // Easy-ish midrange arc
+  let vx = tx / 45;
+  let vy = ty / 45 - 8.6;
+
+  // timing affects side drift:
+  // perfect = straight, early/late = more miss
+  const center = (greenStart + greenEnd)/2;
+  const timingError = (releaseValue - center); // - = early, + = late
+
+  // add miss based on timing
+  const missStrength = green ? 0.12 : 1.35;
+  vx += timingError * 28 * missStrength;
+  vy += Math.abs(timingError) * 3.0 * missStrength;
+
+  ball = { x:startX, y:startY, vx, vy, vy0:vy, prevY:startY };
+  lastEl.textContent = green ? "🟩 GREEN!" : (releaseValue < center ? "🟨 EARLY" : "🟨 LATE");
+
+  if(!green) streak = 0, streakEl.textContent = streak;
+}
+
+function startAim(){
+  if(ball) return;
+  aiming = true;
+  meterFrozen = false;
+}
+
+function releaseAim(){
+  if(!aiming) return;
+  aiming = false;
+  meterFrozen = true;
+  shoot(meter.value);
+
+  // reset needle slowly for next shot
+  setTimeout(()=>{
+    meterFrozen = false;
+    meter.value = 0;
+    meter.dir = 1;
+  }, 220);
+}
+
+function loop(){
+  update();
+  drawCourt();
+  requestAnimationFrame(loop);
+}
+
+// keyboard
+document.addEventListener("keydown",(e)=>{
+  if(e.code==="ArrowLeft" || e.code==="KeyA") keys.left=true;
+  if(e.code==="ArrowRight" || e.code==="KeyD") keys.right=true;
+  if(e.code==="Space") startAim();
+});
+document.addEventListener("keyup",(e)=>{
+  if(e.code==="ArrowLeft" || e.code==="KeyA") keys.left=false;
+  if(e.code==="ArrowRight" || e.code==="KeyD") keys.right=false;
+  if(e.code==="Space") releaseAim();
+});
+
+// mobile buttons (hold for aim)
+const leftBtn = document.getElementById("leftBtn");
+const rightBtn = document.getElementById("rightBtn");
+const shootBtn = document.getElementById("shootBtn");
+
+function hold(btn, onDown, onUp){
+  btn.addEventListener("pointerdown",(e)=>{e.preventDefault(); onDown();});
+  btn.addEventListener("pointerup",(e)=>{e.preventDefault(); onUp();});
+  btn.addEventListener("pointerleave",(e)=>{e.preventDefault(); onUp();});
+  btn.addEventListener("pointercancel",(e)=>{e.preventDefault(); onUp();});
+}
+hold(leftBtn, ()=>keys.left=true, ()=>keys.left=false);
+hold(rightBtn, ()=>keys.right=true, ()=>keys.right=false);
+hold(shootBtn, startAim, releaseAim);
+
+resetGame();
+loop();
+</script>
+</body>
+</html>
