@@ -12,7 +12,7 @@
     canvas{display:block;margin:10px auto;border-radius:18px;background:#111827;box-shadow:0 20px 50px rgba(0,0,0,.6);max-width:96vw;height:auto}
     .tip{opacity:.75;font-size:14px;margin:6px 0 10px}
     .controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;padding:10px 12px 18px}
-    .btn{padding:12px 16px;border-radius:14px;border:0;font-weight:900;cursor:pointer;background:#1f2937;color:#fff;min-width:90px}
+    .btn{padding:12px 16px;border-radius:14px;border:0;font-weight:900;cursor:pointer;background:#1f2937;color:#fff;min-width:95px}
     .btn.shoot{background:#f59e0b;color:#0b1020}
     .btn.reset{background:#93c5fd;color:#0b1020}
   </style>
@@ -24,7 +24,7 @@
     <div class="chip">Streak: <b id="streak">0</b></div>
     <div class="chip">Last: <b id="last">-</b></div>
   </div>
-  <div class="tip">Move: A/D or ←/→ • Hold Space (or hold Shoot) then RELEASE to time it in the GREEN zone</div>
+  <div class="tip">Move: A/D or ←/→ • Hold Space (or hold Shoot) then RELEASE in GREEN</div>
 
   <canvas id="cv" width="820" height="480"></canvas>
 
@@ -51,24 +51,30 @@ const floorY = 360;
 const hoop = { x: 660, y: 150, rimR: 18, boardX: 705, boardY: 80, boardW: 10, boardH: 130 };
 
 // player
-const player = { x: 200, y: 305, r: 20, speed: 5 };
+const player = { x: 240, y: 305, r: 20, speed: 5 };
 const keys = { left:false, right:false };
 
 // ball
-let ball = null; // {x,y,vx,vy,live}
-const gravity = 0.45;
+let ball = null; // {x,y,vx,vy,prevY,life}
+const gravity = 0.38;
 
 // timing meter
 let aiming = false;
-let meter = { x: 0, dir: 1, speed: 0.018, value: 0 }; // value in [0..1]
-let meterFrozen = false;
+let meter = { dir: 1, speed: 0.028, value: 0 }; // faster + snappier
+let shotCooldown = 0; // prevents double-shots
 
-// Green window positions (change to tune difficulty)
-const greenStart = 0.62;
-const greenEnd   = 0.72;
+// ✅ Easier GREEN window
+const greenStart = 0.55;
+const greenEnd   = 0.78;
 
 function resetBall(){
   ball = null;
+}
+
+function resetAim(){
+  aiming = false;
+  meter.value = 0;
+  meter.dir = 1;
 }
 
 function resetGame(){
@@ -76,18 +82,16 @@ function resetGame(){
   scoreEl.textContent = score;
   streakEl.textContent = streak;
   lastEl.textContent = "-";
-  player.x = 200;
-  aiming = false;
-  meterFrozen = false;
-  meter.value = 0;
-  meter.dir = 1;
+  player.x = 240;
+  shotCooldown = 0;
+  resetAim();
   resetBall();
 }
 
 function drawCourt(){
   ctx.clearRect(0,0,cv.width,cv.height);
 
-  // background gradient feel
+  // background
   ctx.fillStyle = "#0b0f18";
   ctx.fillRect(0,0,cv.width,cv.height);
 
@@ -97,7 +101,7 @@ function drawCourt(){
 
   // midrange zone marker
   ctx.fillStyle = "rgba(255,255,255,0.07)";
-  ctx.fillRect(240, floorY-6, 180, 6);
+  ctx.fillRect(220, floorY-6, 220, 6);
 
   // backboard
   ctx.fillStyle = "#e5e7eb";
@@ -126,7 +130,7 @@ function drawCourt(){
   ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
   ctx.fill();
 
-  // ball in hands if not live
+  // ball in hands if no live ball
   if(!ball){
     ctx.fillStyle="#ffb000";
     ctx.beginPath();
@@ -146,8 +150,7 @@ function drawCourt(){
 }
 
 function drawMeter(){
-  // meter box
-  const box = { x: 260, y: 22, w: 300, h: 18 };
+  const box = { x: 260, y: 22, w: 320, h: 18 };
 
   ctx.fillStyle="rgba(17,24,39,0.9)";
   ctx.fillRect(box.x, box.y, box.w, box.h);
@@ -160,7 +163,7 @@ function drawMeter(){
   ctx.fillStyle="rgba(34,197,94,0.75)";
   ctx.fillRect(gx, box.y, gw, box.h);
 
-  // moving needle
+  // needle
   const nx = box.x + box.w * meter.value;
   ctx.strokeStyle = aiming ? "rgba(255,176,0,0.95)" : "rgba(255,255,255,0.35)";
   ctx.lineWidth = 3;
@@ -169,10 +172,10 @@ function drawMeter(){
   ctx.lineTo(nx, box.y + box.h + 4);
   ctx.stroke();
 
-  // label
   ctx.fillStyle="rgba(255,255,255,0.85)";
   ctx.font="14px Arial";
-  ctx.fillText(aiming ? "Timing: RELEASE!" : "Hold to start meter", 18, 36);
+  if(shotCooldown > 0) ctx.fillText("Shot reset...", 18, 36);
+  else ctx.fillText(aiming ? "Release to shoot!" : "Hold to start meter", 18, 36);
 }
 
 function update(){
@@ -181,9 +184,11 @@ function update(){
   if(keys.right) player.x += player.speed;
   player.x = Math.max(player.r, Math.min(cv.width-player.r, player.x));
 
+  // cooldown
+  if(shotCooldown > 0) shotCooldown--;
+
   // meter motion
-  if(aiming && !meterFrozen){
-    // bounce needle back and forth
+  if(aiming && shotCooldown === 0 && !ball){
     meter.value += meter.speed * meter.dir;
     if(meter.value >= 1){ meter.value = 1; meter.dir = -1; }
     if(meter.value <= 0){ meter.value = 0; meter.dir = 1; }
@@ -202,23 +207,30 @@ function update(){
       ball.x = hoop.boardX - 11;
     }
 
-    // floor / out
-    if(ball.y > floorY - 10){
-      // miss landed
-      missShot();
-      ball = null;
-    }
-
-    // make detection (ball crosses rim center downward inside rim)
+    // make detection: cross rim center downward + inside rim
     const dx = ball.x - hoop.x;
     const dy = ball.y - hoop.y;
     const dist = Math.hypot(dx, dy);
     const enteringDown = (ball.prevY < hoop.y) && (ball.y >= hoop.y) && ball.vy > 0;
+
     if(enteringDown && dist < (hoop.rimR - 2)){
       makeShot();
       ball = null;
+      shotCooldown = 18; // quick reset
+      resetAim();
+      return;
     }
-    if(ball) ball.prevY = ball.y;
+
+    // miss landed
+    if(ball.y > floorY - 10){
+      missShot();
+      ball = null;
+      shotCooldown = 18;
+      resetAim();
+      return;
+    }
+
+    ball.prevY = ball.y;
   }
 }
 
@@ -227,7 +239,7 @@ function makeShot(){
   streak += 1;
   scoreEl.textContent = score;
   streakEl.textContent = streak;
-  lastEl.textContent = (streak >= 2) ? "✅ SWISH!" : "✅ MAKE";
+  lastEl.textContent = "✅ MAKE";
 }
 
 function missShot(){
@@ -237,59 +249,52 @@ function missShot(){
 }
 
 function shoot(releaseValue){
-  // only allow a shot if no ball is flying
-  if(ball) return;
+  if(ball || shotCooldown > 0) return;
 
-  // accuracy based on release timing
-  const green = (releaseValue >= greenStart && releaseValue <= greenEnd);
-
-  // base shot vector to hoop
   const startX = player.x + 14;
   const startY = player.y - 20;
 
-  // compute rough direction to hoop
-  const tx = hoop.x - startX;
-  const ty = (hoop.y - 10) - startY;
-
-  // convert to velocities
-  // Easy-ish midrange arc
-  let vx = tx / 45;
-  let vy = ty / 45 - 8.6;
-
-  // timing affects side drift:
-  // perfect = straight, early/late = more miss
   const center = (greenStart + greenEnd)/2;
-  const timingError = (releaseValue - center); // - = early, + = late
+  const green = (releaseValue >= greenStart && releaseValue <= greenEnd);
+  const timingError = (releaseValue - center); // - early, + late
 
-  // add miss based on timing
-  const missStrength = green ? 0.12 : 1.35;
-  vx += timingError * 28 * missStrength;
-  vy += Math.abs(timingError) * 3.0 * missStrength;
+  // ✅ Base shot that actually reaches the hoop
+  const tx = hoop.x - startX;
+  const ty = (hoop.y - 8) - startY;
 
-  ball = { x:startX, y:startY, vx, vy, vy0:vy, prevY:startY };
-  lastEl.textContent = green ? "🟩 GREEN!" : (releaseValue < center ? "🟨 EARLY" : "🟨 LATE");
+  // tuned arc (works from most midrange positions)
+  let vx = tx / 40;
+  let vy = ty / 40 - 9.4;
 
-  if(!green) streak = 0, streakEl.textContent = streak;
+  // ✅ If GREEN, force a very clean shot (high make rate)
+  if(green){
+    vx = tx / 38;
+    vy = ty / 38 - 9.8;
+    lastEl.textContent = "🟩 GREEN!";
+  } else {
+    // miss drift (small, so you still make sometimes)
+    vx += timingError * 18;
+    vy += Math.abs(timingError) * 2.2;
+    lastEl.textContent = (releaseValue < center) ? "🟨 EARLY" : "🟨 LATE";
+    streak = 0; streakEl.textContent = streak;
+  }
+
+  ball = { x:startX, y:startY, vx, vy, prevY:startY };
 }
 
 function startAim(){
-  if(ball) return;
+  if(ball || shotCooldown > 0) return;
   aiming = true;
-  meterFrozen = false;
 }
 
 function releaseAim(){
   if(!aiming) return;
   aiming = false;
-  meterFrozen = true;
   shoot(meter.value);
 
-  // reset needle slowly for next shot
-  setTimeout(()=>{
-    meterFrozen = false;
-    meter.value = 0;
-    meter.dir = 1;
-  }, 220);
+  // reset meter for next attempt (even if you spam)
+  meter.value = 0;
+  meter.dir = 1;
 }
 
 function loop(){
