@@ -47,35 +47,31 @@ let score = 0, streak = 0;
 
 const floorY = 360;
 
-// hoop
-const hoop = { x: 660, y: 150, rimR: 18, boardX: 705, boardY: 80, boardW: 10, boardH: 130 };
+// Hoop
+const hoop = {
+  x: 660, y: 150, rimR: 18,
+  boardX: 705, boardY: 80, boardW: 10, boardH: 130
+};
 
-// player
+// Player
 const player = { x: 240, y: 305, r: 20, speed: 5 };
 const keys = { left:false, right:false };
 
-// ball
-let ball = null; // {x,y,vx,vy,prevY,life}
+// Ball
+let ball = null; // {x,y,vx,vy,prevY}
 const gravity = 0.38;
 
-// timing meter
+// Timing meter
 let aiming = false;
-let meter = { dir: 1, speed: 0.028, value: 0 }; // faster + snappier
-let shotCooldown = 0; // prevents double-shots
+let meter = { dir: 1, speed: 0.028, value: 0 };
+let shotCooldown = 0;
 
-// ✅ Easier GREEN window
+// Green window (easy & visible)
 const greenStart = 0.55;
 const greenEnd   = 0.78;
 
-function resetBall(){
-  ball = null;
-}
-
-function resetAim(){
-  aiming = false;
-  meter.value = 0;
-  meter.dir = 1;
-}
+function resetBall(){ ball = null; }
+function resetAim(){ aiming = false; meter.value = 0; meter.dir = 1; }
 
 function resetGame(){
   score = 0; streak = 0;
@@ -86,6 +82,35 @@ function resetGame(){
   shotCooldown = 0;
   resetAim();
   resetBall();
+}
+
+function drawMeter(){
+  const box = { x: 260, y: 22, w: 320, h: 18 };
+
+  ctx.fillStyle="rgba(17,24,39,0.9)";
+  ctx.fillRect(box.x, box.y, box.w, box.h);
+  ctx.strokeStyle="rgba(255,255,255,0.15)";
+  ctx.strokeRect(box.x, box.y, box.w, box.h);
+
+  // green window
+  const gx = box.x + box.w * greenStart;
+  const gw = box.w * (greenEnd - greenStart);
+  ctx.fillStyle="rgba(34,197,94,0.75)";
+  ctx.fillRect(gx, box.y, gw, box.h);
+
+  // needle
+  const nx = box.x + box.w * meter.value;
+  ctx.strokeStyle = aiming ? "rgba(255,176,0,0.95)" : "rgba(255,255,255,0.35)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(nx, box.y-4);
+  ctx.lineTo(nx, box.y + box.h + 4);
+  ctx.stroke();
+
+  ctx.fillStyle="rgba(255,255,255,0.85)";
+  ctx.font="14px Arial";
+  if(shotCooldown > 0) ctx.fillText("Resetting...", 18, 36);
+  else ctx.fillText(aiming ? "Release to shoot!" : "Hold to start meter", 18, 36);
 }
 
 function drawCourt(){
@@ -130,16 +155,13 @@ function drawCourt(){
   ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
   ctx.fill();
 
-  // ball in hands if no live ball
+  // ball
   if(!ball){
     ctx.fillStyle="#ffb000";
     ctx.beginPath();
     ctx.arc(player.x+14, player.y-20, 10, 0, Math.PI*2);
     ctx.fill();
-  }
-
-  // flying ball
-  if(ball){
+  } else {
     ctx.fillStyle="#ffb000";
     ctx.beginPath();
     ctx.arc(ball.x, ball.y, 10, 0, Math.PI*2);
@@ -149,33 +171,18 @@ function drawCourt(){
   drawMeter();
 }
 
-function drawMeter(){
-  const box = { x: 260, y: 22, w: 320, h: 18 };
+function makeShot(){
+  score += 2;
+  streak += 1;
+  scoreEl.textContent = score;
+  streakEl.textContent = streak;
+  lastEl.textContent = "✅ MAKE";
+}
 
-  ctx.fillStyle="rgba(17,24,39,0.9)";
-  ctx.fillRect(box.x, box.y, box.w, box.h);
-  ctx.strokeStyle="rgba(255,255,255,0.15)";
-  ctx.strokeRect(box.x, box.y, box.w, box.h);
-
-  // green window
-  const gx = box.x + box.w * greenStart;
-  const gw = box.w * (greenEnd - greenStart);
-  ctx.fillStyle="rgba(34,197,94,0.75)";
-  ctx.fillRect(gx, box.y, gw, box.h);
-
-  // needle
-  const nx = box.x + box.w * meter.value;
-  ctx.strokeStyle = aiming ? "rgba(255,176,0,0.95)" : "rgba(255,255,255,0.35)";
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(nx, box.y-4);
-  ctx.lineTo(nx, box.y + box.h + 4);
-  ctx.stroke();
-
-  ctx.fillStyle="rgba(255,255,255,0.85)";
-  ctx.font="14px Arial";
-  if(shotCooldown > 0) ctx.fillText("Shot reset...", 18, 36);
-  else ctx.fillText(aiming ? "Release to shoot!" : "Hold to start meter", 18, 36);
+function missShot(){
+  streak = 0;
+  streakEl.textContent = streak;
+  lastEl.textContent = "❌ MISS";
 }
 
 function update(){
@@ -207,7 +214,7 @@ function update(){
       ball.x = hoop.boardX - 11;
     }
 
-    // make detection: cross rim center downward + inside rim
+    // make detection
     const dx = ball.x - hoop.x;
     const dy = ball.y - hoop.y;
     const dist = Math.hypot(dx, dy);
@@ -216,36 +223,22 @@ function update(){
     if(enteringDown && dist < (hoop.rimR - 2)){
       makeShot();
       ball = null;
-      shotCooldown = 18; // quick reset
+      shotCooldown = 16;
       resetAim();
       return;
     }
 
-    // miss landed
+    // miss
     if(ball.y > floorY - 10){
       missShot();
       ball = null;
-      shotCooldown = 18;
+      shotCooldown = 16;
       resetAim();
       return;
     }
 
     ball.prevY = ball.y;
   }
-}
-
-function makeShot(){
-  score += 2;
-  streak += 1;
-  scoreEl.textContent = score;
-  streakEl.textContent = streak;
-  lastEl.textContent = "✅ MAKE";
-}
-
-function missShot(){
-  streak = 0;
-  streakEl.textContent = streak;
-  lastEl.textContent = "❌ MISS";
 }
 
 function shoot(releaseValue){
@@ -256,27 +249,24 @@ function shoot(releaseValue){
 
   const center = (greenStart + greenEnd)/2;
   const green = (releaseValue >= greenStart && releaseValue <= greenEnd);
-  const timingError = (releaseValue - center); // - early, + late
+  const timingError = releaseValue - center;
 
-  // ✅ Base shot that actually reaches the hoop
-  const tx = hoop.x - startX;
-  const ty = (hoop.y - 8) - startY;
+  // ✅ Consistent arc that reaches rim
+  const dx = hoop.x - startX;
 
-  // tuned arc (works from most midrange positions)
-  let vx = tx / 40;
-  let vy = ty / 40 - 9.4;
+  let vx = dx / 42;
+  let vy = -10.2;
 
-  // ✅ If GREEN, force a very clean shot (high make rate)
   if(green){
-    vx = tx / 38;
-    vy = ty / 38 - 9.8;
+    // tighter aim
+    vx = dx / 40;
     lastEl.textContent = "🟩 GREEN!";
   } else {
-    // miss drift (small, so you still make sometimes)
-    vx += timingError * 18;
-    vy += Math.abs(timingError) * 2.2;
-    lastEl.textContent = (releaseValue < center) ? "🟨 EARLY" : "🟨 LATE";
-    streak = 0; streakEl.textContent = streak;
+    // timing drift left/right (miss control)
+    vx += timingError * 14;
+    lastEl.textContent = timingError < 0 ? "🟨 EARLY" : "🟨 LATE";
+    streak = 0;
+    streakEl.textContent = streak;
   }
 
   ball = { x:startX, y:startY, vx, vy, prevY:startY };
@@ -291,8 +281,7 @@ function releaseAim(){
   if(!aiming) return;
   aiming = false;
   shoot(meter.value);
-
-  // reset meter for next attempt (even if you spam)
+  // always reset meter immediately
   meter.value = 0;
   meter.dir = 1;
 }
@@ -315,7 +304,7 @@ document.addEventListener("keyup",(e)=>{
   if(e.code==="Space") releaseAim();
 });
 
-// mobile buttons (hold for aim)
+// mobile buttons
 const leftBtn = document.getElementById("leftBtn");
 const rightBtn = document.getElementById("rightBtn");
 const shootBtn = document.getElementById("shootBtn");
